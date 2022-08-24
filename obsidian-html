@@ -1,0 +1,144 @@
+#!/bin/bash
+
+INPUT=${1}
+OUTPUT=${2}
+ASSETS_DIR=${3}
+
+function render_usage {
+  echo ""
+  if [[ $1 ]]; then
+    echo "Error: ${1}"
+  fi
+  echo "Usage:"
+  echo "  obsidian-html [input] [output] [assets_dir]"
+}
+
+function check_exists {
+  if [ ! -f "${1}" ]; then
+    echo ""
+    echo "Error: ${1} does not exist"
+    exit
+  fi
+}
+
+function green_text {
+  echo -e "\e[32m${1}\e[0m"
+}
+
+function red_text {
+  echo -e "\e[31m${1}\e[0m"
+}
+
+function checkmark {
+  echo $(green_text "✓")
+}
+
+function crossmark {
+  echo $(red_text "✗")
+}
+
+echo "Checking if Pandoc is installed..."
+if ! command -v pandoc &> /dev/null
+then
+  echo "  $(crossmark) Pandoc not installed."
+  echo ""
+  echo "Please install Pandoc"
+  exit
+fi
+
+echo "  $(checkmark) Pandoc installed"
+
+if [[ -z "${INPUT}" ]];
+then
+  render_usage "$(crossmark) No input specified"
+  exit
+fi
+
+if [[ -z "${OUTPUT}" ]]; then
+  render_usage "$(crossmark) No ouput specified"
+  exit
+fi
+
+check_exists "${INPUT}"
+
+filename=$(basename "${INPUT}")
+filename=${filename/".md"/""}
+filename=${filename/" "/"-"}
+temp_file="${filename}_temp.md"
+
+echo ""
+echo "Converting ${INPUT}"
+echo "         → ${OUTPUT}"
+
+MDFile=$(cat "${INPUT}")
+
+imagePattern='\!\[\[(.*)\]\]'
+titlePattern='# (.*)'
+title=""
+
+SAVEIFS=$IFS
+IFS=$'\n'
+lines=($MDFile)
+IFS=$SAVEIFS
+
+matches=()
+
+for line in "${lines[@]}"; do
+    if [[ "${ASSETS_DIR}" ]]; then
+        [[ "${line}" =~ $imagePattern ]]
+        if [[ ${BASH_REMATCH[1]} ]]; then
+	    matches+=("${BASH_REMATCH[0]}")
+        fi
+    fi
+    if [[ ! "${title}" ]]; then
+	[[ "${line}" =~ $titlePattern ]]
+	if [[ "${BASH_REMATCH[1]}" ]]; then
+	    echo "Setting title: ${BASH_REMATCH[1]}"
+	    title="${BASH_REMATCH[1]}"
+	fi
+    fi
+done
+
+for match in "${matches[@]}"; do
+    [[ "${match}" =~ $imagePattern ]]
+    if [[ "${BASH_REMATCH[1]}" ]]; then
+        MDFile=${MDFile/"${BASH_REMATCH[0]}"/"![](${ASSETS_DIR}/${BASH_REMATCH[1]})"}
+    fi
+done
+
+echo ""
+echo "Writing temp file: ${filename}_temp.md"
+if [[ "${lines[0]}" != "---" ]]; then
+    MDFile=$(echo "---
+pagetitle: ${title}
+---
+${MDFile}")
+fi
+echo "${MDFile}" > "${temp_file}"
+echo "  $(checkmark) Done"
+
+EXEC="pandoc --standalone -o ${OUTPUT} --from=markdown --to=html --css=https://lukewh.com/splendor.css"
+
+if [[ "${ASSETS_DIR}" ]]; then
+    echo ""
+    echo "Using assets dir: ${ASSETS_DIR}"
+    EXEC="${EXEC} --embed-resources --resource-path=\"${ASSETS_DIR}\""
+fi
+
+EXEC="${EXEC} ${temp_file}"
+
+echo ""
+echo "Executing:"
+echo "  ${EXEC}"
+${EXEC}
+echo "  $(checkmark) Done"
+echo ""
+
+echo "Tidying up..."
+echo "  Removing temp file: ${temp_file}"
+rm "${temp_file}"
+echo "  $(checkmark) Done"
+
+echo ""
+echo $(green_text "Created ${OUTPUT}")
+
